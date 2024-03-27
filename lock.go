@@ -15,12 +15,31 @@ var (
 )
 
 var (
-	//go:embed unlock.lua
+	//go:embed script/lua/unlock.lua
 	luaUnlock string
 )
 
 type Client struct {
 	client redis.Cmdable
+}
+
+func NewClient(client redis.Cmdable) *Client {
+	return &Client{
+		client: client,
+	}
+}
+
+func (c *Client) TryLock(ctx context.Context, key string, expiration time.Duration) (*Lock, error) {
+	val := uuid.New().String()
+	res, err := c.client.SetNX(ctx, key, val, expiration).Result()
+	if err != nil {
+		return nil, err
+	}
+	if !res {
+		return nil, ErrFailedToPreemptLock
+	}
+
+	return newLock(c.client, key, val), nil
 }
 
 type Lock struct {
@@ -35,19 +54,6 @@ func newLock(client redis.Cmdable, key string, val string) *Lock {
 		key:    key,
 		val:    val,
 	}
-}
-
-func (l *Lock) TryLock(ctx context.Context, key string, expiration time.Duration) (*Lock, error) {
-	val := uuid.New().String()
-	res, err := l.client.SetNX(ctx, key, val, expiration).Result()
-	if err != nil {
-		return nil, err
-	}
-	if !res {
-		return nil, ErrFailedToPreemptLock
-	}
-
-	return newLock(l.client, key, val), nil
 }
 
 func (l *Lock) Unlock(ctx context.Context) error {
